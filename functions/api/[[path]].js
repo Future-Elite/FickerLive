@@ -150,10 +150,18 @@ async function douyuSignScript(roomId) {
 async function playDouyu(roomId, sign) {
   if (!sign) throw new Error("缺少斗鱼播放签名。");
   const first = await requestDouyuPlay(roomId, sign, "ws-h5", 0);
-  const cdns = (first.data?.cdnsWithName || []).map((item) => item.cdn).filter(Boolean);
-  const rates = (first.data?.multirates || []).filter((item) => Number.isFinite(Number(item.rate)));
-  const selectedRates = rates.length ? rates.slice(0, 4) : [{ name: "默认", rate: 0 }];
-  const selectedCdns = cdns.length ? cdns.slice(0, 2) : [first.data?.rtmp_cdn || ""];
+  const cdns = uniqueValues(["ws-h5", first.data?.rtmp_cdn, ...(first.data?.cdnsWithName || []).map((item) => item.cdn)]);
+  const rates = (first.data?.multirates || [])
+    .filter((item) => Number.isFinite(Number(item.rate)))
+    .map((item) => ({
+      name: item.name || "默认",
+      rate: Number(item.rate),
+      bit: Number(item.bit || 0),
+      highBit: Number(item.highBit || 0)
+    }))
+    .sort((a, b) => qualityScore(b) - qualityScore(a));
+  const selectedRates = rates.length ? rates.slice(0, 5) : [{ name: "默认", rate: 0, bit: 0, highBit: 0 }];
+  const selectedCdns = cdns.slice(0, 4);
   const urls = [];
 
   for (const rate of selectedRates) {
@@ -163,7 +171,11 @@ async function playDouyu(roomId, sign) {
         const rawUrl = buildDouyuStreamUrl(data.data);
         if (rawUrl) {
           urls.push({
-            quality: `${rate.name || "默认"} · ${cdn || data.data?.rtmp_cdn || "线路"}`,
+            quality: `${rate.name}${rate.bit ? ` ${rate.bit}K` : ""} · ${cdn || data.data?.rtmp_cdn || "线路"}`,
+            rate: rate.rate,
+            bitrate: rate.bit,
+            highBit: rate.highBit,
+            cdn: cdn || data.data?.rtmp_cdn || "",
             directUrl: rawUrl,
             url: `/api/stream?site=douyu&format=flv&url=${encodeURIComponent(rawUrl)}`
           });
@@ -181,7 +193,11 @@ async function playDouyu(roomId, sign) {
     seen.add(item.directUrl);
     unique.push(item);
   }
-  unique.sort((a, b) => Number(isPreferredDouyuCdn(b.directUrl)) - Number(isPreferredDouyuCdn(a.directUrl)));
+  unique.sort((a, b) => {
+    const qualityDiff = qualityScore(b) - qualityScore(a);
+    if (qualityDiff) return qualityDiff;
+    return cdnScore(b) - cdnScore(a);
+  });
 
   return {
     urls: unique.slice(0, 8),
@@ -189,13 +205,21 @@ async function playDouyu(roomId, sign) {
   };
 }
 
-function isPreferredDouyuCdn(url) {
+function qualityScore(item) {
+  return Number(item.highBit || 0) * 100000 + Number(item.bitrate || item.bit || 0) * 10 + Number(item.rate === 0);
+}
+
+function cdnScore(item) {
   try {
-    const host = new URL(url).hostname;
-    return host.includes("douyucdn");
+    const host = new URL(item.directUrl || "").hostname;
+    return Number(host.includes("douyucdn")) * 10 + Number(String(item.cdn || "").includes("ws"));
   } catch {
-    return false;
+    return 0;
   }
+}
+
+function uniqueValues(values) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 async function requestDouyuPlay(roomId, sign, cdn, rate) {
