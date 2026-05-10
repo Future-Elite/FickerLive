@@ -38,7 +38,7 @@ export async function onRequest(context) {
 async function recommend(site, page) {
   if (site === "douyu") return recommendDouyu(page);
   if (site === "huya") return recommendHuya(page);
-  if (site === "bilibili") return searchBilibili("直播", page);
+  if (site === "bilibili") return recommendBilibili(page);
   if (site === "douyin") throw new Error("抖音 Web 接口依赖 a_bogus 签名和风控 Cookie，当前 Cloudflare 版默认不启用。");
 }
 
@@ -284,93 +284,218 @@ function huyaRoom(item) {
 }
 
 async function searchBilibili(keyword, page) {
-  const headers = await biliHeaders();
-  const data = await getJson(urlWithParams("https://api.bilibili.com/x/web-interface/search/type", {
-    context: "",
-    search_type: "live",
-    cover_type: "user_cover",
-    order: "",
-    keyword,
-    category_id: "",
-    __refresh__: "",
-    _extra: "",
-    highlight: 0,
-    single_column: 0,
-    page
-  }), { headers });
+  const headers = await biliHeaders({
+    referer: "https://search.bilibili.com/",
+    origin: "https://search.bilibili.com"
+  });
+  try {
+    const data = await getJson(urlWithParams("https://api.bilibili.com/x/web-interface/search/type", {
+      context: "",
+      search_type: "live",
+      cover_type: "user_cover",
+      order: "",
+      keyword,
+      category_id: "",
+      __refresh__: "",
+      _extra: "",
+      highlight: 0,
+      single_column: 0,
+      page
+    }), { headers });
 
-  const rooms = data.data?.result?.live_room || [];
-  return {
-    hasMore: rooms.length >= 40,
-    items: rooms.map((item) => normalizeRoom("bilibili", {
-      roomId: item.roomid,
-      title: stripHtml(item.title),
-      cover: absoluteUrl(item.user_cover || item.cover),
-      avatar: absoluteUrl(item.uface),
-      userName: stripHtml(item.uname),
-      online: item.online,
-      status: item.live_status === 1,
-      url: `https://live.bilibili.com/${item.roomid}`
-    }))
-  };
+    const rooms = data.data?.result?.live_room || [];
+    return {
+      hasMore: rooms.length >= 40,
+      items: rooms.map((item) => normalizeRoom("bilibili", {
+        roomId: item.roomid,
+        title: stripHtml(item.title),
+        cover: absoluteUrl(item.user_cover || item.cover),
+        avatar: absoluteUrl(item.uface),
+        userName: stripHtml(item.uname),
+        online: item.online,
+        status: item.live_status === 1,
+        url: `https://live.bilibili.com/${item.roomid}`
+      }))
+    };
+  } catch {
+    const fallback = await recommendBilibili(page);
+    const text = keyword.trim().toLowerCase();
+    return {
+      ...fallback,
+      items: fallback.items.filter((item) => {
+        return item.title.toLowerCase().includes(text) || item.userName.toLowerCase().includes(text);
+      })
+    };
+  }
 }
 
 async function roomBilibili(roomId) {
-  const data = await getJson(`https://api.live.bilibili.com/room/v1/Room/get_info?room_id=${encodeURIComponent(roomId)}`, {
-    headers: await biliHeaders()
-  });
-  const item = data.data || {};
-  return normalizeRoom("bilibili", {
-    roomId: item.room_id || roomId,
-    title: item.title,
-    cover: item.user_cover || item.keyframe,
-    userName: item.uname || "Bilibili",
-    online: item.online,
-    status: item.live_status === 1,
-    introduction: item.description || item.tags,
-    url: `https://live.bilibili.com/${roomId}`
-  });
+  try {
+    const data = await getJson(`https://api.live.bilibili.com/room/v1/Room/get_info?room_id=${encodeURIComponent(roomId)}`, {
+      headers: await biliHeaders({
+        referer: `https://live.bilibili.com/${roomId}`,
+        origin: "https://live.bilibili.com"
+      })
+    });
+    const item = data.data || {};
+    return normalizeRoom("bilibili", {
+      roomId: item.room_id || roomId,
+      title: item.title,
+      cover: item.user_cover || item.keyframe,
+      userName: item.uname || "Bilibili",
+      online: item.online,
+      status: item.live_status === 1,
+      introduction: item.description || item.tags,
+      url: `https://live.bilibili.com/${roomId}`
+    });
+  } catch {
+    return normalizeRoom("bilibili", {
+      roomId,
+      title: `B 站直播间 ${roomId}`,
+      userName: "Bilibili",
+      status: true,
+      url: `https://live.bilibili.com/${roomId}`
+    });
+  }
 }
 
 async function playBilibili(roomId) {
-  const data = await getJson(urlWithParams("https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo", {
-    room_id: roomId,
-    protocol: "0,1",
-    format: "0,2",
-    codec: "0",
-    platform: "web",
-    qn: "10000"
-  }), {
-    headers: await biliHeaders()
-  });
-  const playurl = data.data?.playurl_info?.playurl;
-  if (!playurl) return { urls: [], notice: "没有获取到播放地址。" };
+  try {
+    const data = await getJson(urlWithParams("https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo", {
+      room_id: roomId,
+      protocol: "0,1",
+      format: "0,2",
+      codec: "0",
+      platform: "web",
+      qn: "10000"
+    }), {
+      headers: await biliHeaders({
+        referer: `https://live.bilibili.com/${roomId}`,
+        origin: "https://live.bilibili.com"
+      })
+    });
+    const playurl = data.data?.playurl_info?.playurl;
+    if (!playurl) return playBilibiliLegacy(roomId);
 
-  const qnMap = new Map((playurl.g_qn_desc || []).map((item) => [String(item.qn), item.desc]));
-  const urls = [];
-  for (const stream of playurl.stream || []) {
-    for (const format of stream.format || []) {
-      for (const codec of format.codec || []) {
-        const quality = qnMap.get(String(codec.current_qn)) || format.format_name || stream.protocol_name;
-        for (const info of codec.url_info || []) {
-          const url = `${info.host}${codec.base_url}${info.extra}`;
-          urls.push({ quality: `${quality} · ${format.format_name}`, url });
+    const qnMap = new Map((playurl.g_qn_desc || []).map((item) => [String(item.qn), item.desc]));
+    const urls = [];
+    for (const stream of playurl.stream || []) {
+      for (const format of stream.format || []) {
+        for (const codec of format.codec || []) {
+          const quality = qnMap.get(String(codec.current_qn)) || format.format_name || stream.protocol_name;
+          for (const info of codec.url_info || []) {
+            const url = `${info.host}${codec.base_url}${info.extra}`;
+            urls.push({ quality: `${quality} · ${format.format_name}`, url });
+          }
         }
       }
     }
+
+    urls.sort((a, b) => Number(b.url.includes(".m3u8")) - Number(a.url.includes(".m3u8")));
+    const hlsUrls = urls
+      .filter((item) => item.url.includes(".m3u8"))
+      .map((item) => proxiedBilibiliUrl(item));
+    if (hlsUrls.length) return {
+      urls: hlsUrls.slice(0, 6),
+      headers: { Referer: "https://live.bilibili.com/" }
+    };
+  } catch {
+    // Cloudflare egress is often blocked by Bilibili's newer web play API.
   }
 
-  urls.sort((a, b) => Number(b.url.includes(".m3u8")) - Number(a.url.includes(".m3u8")));
-  const hlsUrls = urls
-    .filter((item) => item.url.includes(".m3u8"))
-    .map((item) => ({
-      ...item,
-      directUrl: item.url,
-      url: `/api/stream?site=bilibili&url=${encodeURIComponent(item.url)}`
-    }));
+  return playBilibiliLegacy(roomId);
+}
+
+async function recommendBilibili(page) {
+  try {
+    const data = await getJson(urlWithParams("https://api.live.bilibili.com/xlive/web-interface/v1/index/getList", {
+      platform: "web",
+      page
+    }), {
+      headers: await biliHeaders({
+        referer: "https://live.bilibili.com/",
+        origin: "https://live.bilibili.com"
+      })
+    });
+    const modules = data.data?.room_list || [];
+    const recommendRooms = data.data?.recommend_room_list?.list || [];
+    const rooms = [...recommendRooms, ...modules.flatMap((module) => module.list || [])];
+    return {
+      hasMore: rooms.length > 0,
+      items: rooms.map((item) => biliRoom(item))
+    };
+  } catch {
+    return fallbackBilibiliRooms(page);
+  }
+}
+
+async function playBilibiliLegacy(roomId) {
+  try {
+    const data = await getJson(urlWithParams("https://api.live.bilibili.com/room/v1/Room/playUrl", {
+      cid: roomId,
+      qn: "10000",
+      platform: "h5"
+    }), {
+      headers: await biliHeaders({
+        referer: `https://live.bilibili.com/${roomId}`,
+        origin: "https://live.bilibili.com"
+      })
+    });
+    const qnMap = new Map((data.data?.quality_description || []).map((item) => [String(item.qn), item.desc]));
+    const quality = qnMap.get(String(data.data?.current_qn)) || "默认";
+    const hlsUrls = (data.data?.durl || [])
+      .map((item, index) => ({
+        quality: `${quality} · 线路 ${index + 1}`,
+        url: String(item.url || "")
+      }))
+      .filter((item) => item.url.includes(".m3u8"))
+      .map((item) => proxiedBilibiliUrl(item));
+    if (hlsUrls.length) return {
+      urls: hlsUrls.slice(0, 6),
+      notice: ""
+    };
+  } catch {
+    // Fall back to the official embed page when Bilibili blocks Cloudflare API egress.
+  }
+
   return {
-    urls: hlsUrls.slice(0, 6),
-    headers: { Referer: "https://live.bilibili.com/" }
+    urls: [],
+    embedUrl: `https://live.bilibili.com/blanc/${encodeURIComponent(roomId)}`,
+    notice: "B 站接口拦截了 Cloudflare 代理，已切换为官方嵌入播放器。"
+  };
+}
+
+function biliRoom(item) {
+  return normalizeRoom("bilibili", {
+    roomId: item.roomid || item.room_id,
+    title: stripHtml(item.title),
+    cover: item.keyframe || item.cover,
+    avatar: item.face || item.uface,
+    userName: stripHtml(item.uname),
+    online: item.online || item.watched_show?.num,
+    status: item.status ?? true,
+    url: `https://live.bilibili.com/${item.roomid || item.room_id}`
+  });
+}
+
+function proxiedBilibiliUrl(item) {
+  return {
+    ...item,
+    directUrl: item.url,
+    url: `/api/stream?site=bilibili&url=${encodeURIComponent(item.url)}`
+  };
+}
+
+function fallbackBilibiliRooms(page) {
+  return {
+    hasMore: false,
+    items: page === 1 ? [normalizeRoom("bilibili", {
+      roomId: "6",
+      title: "B 站直播",
+      userName: "Bilibili",
+      status: true,
+      url: "https://live.bilibili.com/6"
+    })] : []
   };
 }
 
@@ -426,17 +551,19 @@ function rewriteM3u8(text, baseUrl) {
     .map((line) => {
       const trimmed = line.trim();
       if (!trimmed) return line;
-      if (trimmed.startsWith("#EXT-X-KEY") && trimmed.includes("URI=")) {
-        return line.replace(/URI="([^"]+)"/, (_, uri) => {
-          const resolved = new URL(uri, baseUrl).toString();
-          return `URI="/api/stream?site=bilibili&url=${encodeURIComponent(resolved)}"`;
-        });
-      }
+      if (trimmed.startsWith("#") && trimmed.includes("URI=")) return rewriteM3u8UriAttributes(line, baseUrl);
       if (trimmed.startsWith("#")) return line;
       const resolved = new URL(trimmed, baseUrl).toString();
       return `/api/stream?site=bilibili&url=${encodeURIComponent(resolved)}`;
     })
     .join("\n");
+}
+
+function rewriteM3u8UriAttributes(line, baseUrl) {
+  return line.replace(/URI="([^"]+)"/g, (_, uri) => {
+    const resolved = new URL(uri, baseUrl).toString();
+    return `URI="/api/stream?site=bilibili&url=${encodeURIComponent(resolved)}"`;
+  });
 }
 
 function isAllowedStreamHost(site, hostname) {
@@ -454,17 +581,52 @@ function isAllowedStreamHost(site, hostname) {
   return false;
 }
 
-async function biliHeaders() {
-  const base = { "User-Agent": USER_AGENT, Referer: "https://live.bilibili.com/" };
+async function biliHeaders({ referer = "https://live.bilibili.com/", origin = "https://live.bilibili.com" } = {}) {
+  const base = {
+    "User-Agent": USER_AGENT,
+    Referer: referer,
+    Origin: origin,
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site"
+  };
+  const fallbackCookie = makeBiliCookie();
   try {
-    const data = await getJson("https://api.bilibili.com/x/frontend/finger/spi", { headers: base });
+    const data = await getJson("https://api.bilibili.com/x/frontend/finger/spi", {
+      headers: {
+        ...base,
+        Referer: "https://www.bilibili.com/",
+        Origin: "https://www.bilibili.com",
+        Cookie: fallbackCookie
+      }
+    });
     return {
       ...base,
-      Cookie: `buvid3=${data.data?.b_3 || ""}; buvid4=${data.data?.b_4 || ""};`
+      Cookie: makeBiliCookie(data.data)
     };
   } catch {
-    return base;
+    return { ...base, Cookie: fallbackCookie };
   }
+}
+
+function makeBiliCookie(data = {}) {
+  const now = Math.round(Date.now() / 1000);
+  const buvid3 = data.b_3 || `${randomBiliId()}infoc`;
+  const buvid4 = data.b_4 || "";
+  const uuid = `${randomBiliId().slice(0, 8)}-${randomBiliId().slice(0, 4)}-${randomBiliId().slice(0, 4)}-${randomBiliId().slice(0, 4)}-${randomBiliId().slice(0, 12)}${now}infoc`;
+  return [
+    `buvid3=${buvid3}`,
+    buvid4 ? `buvid4=${buvid4}` : "",
+    `b_nut=${now}`,
+    `_uuid=${uuid}`,
+    "CURRENT_FNVAL=4048"
+  ].filter(Boolean).join("; ");
+}
+
+function randomBiliId() {
+  return crypto.randomUUID().replace(/-/g, "").toUpperCase();
 }
 
 async function getJson(url, init = {}) {

@@ -296,9 +296,14 @@ function renderDetail() {
   if (room.loading) return `<div class="detail-empty">正在获取直播间信息</div>`;
   if (room.error) return `<div class="detail-empty">${escapeHtml(room.error)}</div>`;
   const urls = room.play?.urls || [];
+  const embedUrl = room.play?.embedUrl || "";
   return `
     <div class="player-box">
-      <video id="player" controls playsinline poster="${room.cover || ""}"></video>
+      ${
+        embedUrl
+          ? `<iframe class="embed-player" src="${escapeHtml(embedUrl)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe>`
+          : `<video id="player" controls playsinline poster="${room.cover || ""}"></video>`
+      }
     </div>
     <div class="detail-head">
       <img src="${room.avatar || room.cover || "/assets/logo.png"}" alt="" />
