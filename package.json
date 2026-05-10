@@ -1,0 +1,20 @@
+{
+  "name": "simple-live-cloudflare",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "pages:dev": "vite build && wrangler pages dev dist"
+  },
+  "dependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
+    "crypto-js": "^4.2.0",
+    "flv.js": "^1.6.2",
+    "hls.js": "^1.6.2",
+    "vite": "^6.0.0",
+    "wrangler": "^4.16.0"
+  }
+}
