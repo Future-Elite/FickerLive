@@ -155,7 +155,7 @@ function playUrl(url, options = {}) {
     const player = flvjs.createPlayer(
       { type: "flv", isLive: true, url },
       {
-        enableWorker: true,
+        enableWorker: false,
         enableStashBuffer: false,
         stashInitialSize: 128,
         lazyLoad: false
@@ -301,7 +301,7 @@ function renderDetail() {
     <div class="player-box">
       ${
         embedUrl
-          ? `<iframe class="embed-player" src="${escapeHtml(embedUrl)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe>`
+          ? `<iframe class="embed-player" src="${escapeHtml(embedUrl)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="no-referrer"></iframe>`
           : `<video id="player" controls playsinline poster="${room.cover || ""}"></video>`
       }
     </div>
