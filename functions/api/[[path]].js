@@ -223,7 +223,7 @@ function uniqueValues(values) {
 }
 
 async function requestDouyuPlay(roomId, sign, cdn, rate) {
-  const body = `${sign}&cdn=${encodeURIComponent(cdn || "")}&rate=${encodeURIComponent(rate)}&ver=Douyu_223061205&iar=1&ive=1&hevc=0&fa=0`;
+  const body = `${sign}&cdn=${encodeURIComponent(cdn || "")}&rate=${encodeURIComponent(rate)}&ver=Douyu_223061205&iar=0&ive=0&hevc=0&fa=0`;
   return getJson(`https://www.douyu.com/lapi/live/getH5Play/${encodeURIComponent(roomId)}`, {
     method: "POST",
     headers: {
@@ -561,7 +561,7 @@ async function streamProxy(request, requestUrl) {
   const responseHeaders = new Headers(upstream.headers);
   responseHeaders.set("access-control-allow-origin", "*");
   if (site === "douyu") responseHeaders.set("content-type", "video/x-flv");
-  responseHeaders.set("cache-control", "public, max-age=3600");
+  responseHeaders.set("cache-control", "no-store");
   responseHeaders.delete("set-cookie");
   return new Response(upstream.body, {
     status: upstream.status,

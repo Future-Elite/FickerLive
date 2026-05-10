@@ -291,6 +291,7 @@ video {
   height: 100%;
   display: block;
   background: #020617;
+  object-fit: contain;
 }
 
 .embed-player {
