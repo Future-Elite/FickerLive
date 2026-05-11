@@ -15,10 +15,18 @@ const state = {
   loading: false,
   selected: null,
   rooms: [],
-  follows: readStore("simple_live_follows", [])
+  follows: readStore("simple_live_follows", []),
+  danmakuEnabled: readStore("simple_live_danmaku_enabled", true),
+  danmakuStatus: ""
 };
 
 const app = document.querySelector("#app");
+const danmakuRuntime = {
+  socket: null,
+  heartbeat: null,
+  activeKey: "",
+  counter: 0
+};
 
 function readStore(key, fallback) {
   try {
@@ -56,6 +64,7 @@ async function loadRooms(reset = true) {
   if (state.loading) return;
   state.loading = true;
   if (reset) {
+    stopDanmaku();
     state.page = 1;
     state.rooms = [];
     state.selected = null;
@@ -110,6 +119,7 @@ async function selectRoom(room) {
       playUrl(firstPlayable.url, { autoplay: false });
     }
   }
+  startDanmaku(state.selected);
 }
 
 async function getDouyuSign(roomId) {
@@ -182,6 +192,212 @@ function playUrl(url, options = {}) {
   }
   video.src = url;
   if (options.autoplay !== false) video.play().catch(() => {});
+}
+
+async function startDanmaku(room) {
+  stopDanmaku(false);
+  if (!state.danmakuEnabled || !room?.site || !room?.roomId) return;
+  const key = `${room.site}:${room.roomId}`;
+  danmakuRuntime.activeKey = key;
+  state.danmakuStatus = "弹幕连接中";
+  updateDanmakuStatus();
+  try {
+    const data = await api("/api/danmaku", { site: room.site, roomId: room.roomId });
+    if (danmakuRuntime.activeKey !== key || !state.danmakuEnabled) return;
+    if (room.site === "douyu") connectDouyuDanmaku(data.danmaku.roomId);
+    if (room.site === "bilibili") connectBilibiliDanmaku(data.danmaku);
+  } catch (error) {
+    state.danmakuStatus = `弹幕连接失败：${error.message}`;
+    updateDanmakuStatus();
+  }
+}
+
+function stopDanmaku(clearStatus = true) {
+  if (danmakuRuntime.heartbeat) clearInterval(danmakuRuntime.heartbeat);
+  danmakuRuntime.heartbeat = null;
+  if (danmakuRuntime.socket) {
+    danmakuRuntime.socket.onclose = null;
+    danmakuRuntime.socket.close();
+  }
+  danmakuRuntime.socket = null;
+  danmakuRuntime.activeKey = "";
+  if (clearStatus) {
+    state.danmakuStatus = "";
+    updateDanmakuStatus();
+  }
+}
+
+function connectDouyuDanmaku(roomId) {
+  const socket = new WebSocket("wss://danmuproxy.douyu.com:8501");
+  socket.binaryType = "arraybuffer";
+  danmakuRuntime.socket = socket;
+  socket.addEventListener("open", () => {
+    state.danmakuStatus = "斗鱼弹幕已连接";
+    updateDanmakuStatus();
+    socket.send(serializeDouyu(`type@=loginreq/roomid@=${roomId}/`));
+    socket.send(serializeDouyu(`type@=joingroup/rid@=${roomId}/gid@=-9999/`));
+    danmakuRuntime.heartbeat = setInterval(() => socket.readyState === WebSocket.OPEN && socket.send(serializeDouyu("type@=mrkl/")), 45000);
+  });
+  socket.addEventListener("message", (event) => {
+    const text = deserializeDouyu(event.data);
+    if (!text) return;
+    const messages = text.includes("//") ? text.split("//") : [text];
+    for (const item of messages) {
+      const data = parseDouyuStt(item);
+      if (data?.type === "chatmsg" && data.txt && data.dms !== undefined) {
+        addDanmaku(`${data.nn || ""}：${data.txt}`, douyuColor(data.col));
+      }
+    }
+  });
+  socket.addEventListener("close", () => {
+    state.danmakuStatus = "斗鱼弹幕已断开";
+    updateDanmakuStatus();
+  });
+}
+
+function connectBilibiliDanmaku(args) {
+  const socket = new WebSocket(`wss://${args.serverHost || "broadcastlv.chat.bilibili.com"}/sub`);
+  socket.binaryType = "arraybuffer";
+  danmakuRuntime.socket = socket;
+  socket.addEventListener("open", () => {
+    state.danmakuStatus = "B 站弹幕已连接";
+    updateDanmakuStatus();
+    const join = {
+      uid: 0,
+      roomid: Number(args.roomId || 0),
+      protover: 2,
+      buvid: args.buvid || "",
+      platform: "web",
+      type: 2,
+      key: args.token || ""
+    };
+    socket.send(encodeBiliPacket(JSON.stringify(join), 7));
+    danmakuRuntime.heartbeat = setInterval(() => socket.readyState === WebSocket.OPEN && socket.send(encodeBiliPacket("", 2)), 30000);
+  });
+  socket.addEventListener("message", (event) => handleBiliPacket(event.data));
+  socket.addEventListener("close", () => {
+    state.danmakuStatus = "B 站弹幕已断开";
+    updateDanmakuStatus();
+  });
+}
+
+function serializeDouyu(body) {
+  const data = new TextEncoder().encode(body);
+  const buffer = new ArrayBuffer(12 + data.length + 1);
+  const view = new DataView(buffer);
+  const length = data.length + 9;
+  view.setUint32(0, length, true);
+  view.setUint32(4, length, true);
+  view.setUint16(8, 689, true);
+  view.setUint8(10, 0);
+  view.setUint8(11, 0);
+  new Uint8Array(buffer, 12, data.length).set(data);
+  return buffer;
+}
+
+function deserializeDouyu(payload) {
+  const buffer = payload instanceof ArrayBuffer ? payload : payload.buffer;
+  if (buffer.byteLength < 13) return "";
+  const view = new DataView(buffer);
+  const bodyLength = view.getUint32(0, true) - 9;
+  return new TextDecoder().decode(new Uint8Array(buffer, 12, Math.max(0, bodyLength)));
+}
+
+function parseDouyuStt(text = "") {
+  if (!text.includes("@=")) return null;
+  const result = {};
+  for (const field of text.split("/")) {
+    if (!field) continue;
+    const index = field.indexOf("@=");
+    if (index < 0) continue;
+    result[field.slice(0, index)] = unescapeDouyu(field.slice(index + 2));
+  }
+  return result;
+}
+
+function unescapeDouyu(value = "") {
+  return value.replace(/@S/g, "/").replace(/@A/g, "@");
+}
+
+function douyuColor(value) {
+  const colors = { 1: "#ff4d4f", 2: "#3aa0ff", 3: "#7bd94c", 4: "#ff9a3c", 5: "#b366ff", 6: "#ff79c6" };
+  return colors[Number(value)] || "#ffffff";
+}
+
+function encodeBiliPacket(message, operation) {
+  const body = new TextEncoder().encode(message);
+  const buffer = new ArrayBuffer(16 + body.length);
+  const view = new DataView(buffer);
+  view.setUint32(0, buffer.byteLength);
+  view.setUint16(4, 16);
+  view.setUint16(6, 0);
+  view.setUint32(8, operation);
+  view.setUint32(12, 1);
+  new Uint8Array(buffer, 16).set(body);
+  return buffer;
+}
+
+async function handleBiliPacket(payload) {
+  const buffer = payload instanceof ArrayBuffer ? payload : await payload.arrayBuffer();
+  const view = new DataView(buffer);
+  let offset = 0;
+  while (offset + 16 <= buffer.byteLength) {
+    const packetLength = view.getUint32(offset);
+    const headerLength = view.getUint16(offset + 4);
+    const version = view.getUint16(offset + 6);
+    const operation = view.getUint32(offset + 8);
+    const body = buffer.slice(offset + headerLength, offset + packetLength);
+    if (operation === 5) {
+      if (version === 0) parseBiliMessages(new TextDecoder().decode(body));
+      if (version === 2) {
+        try {
+          const inflated = await new Response(new Blob([body]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
+          parseBiliMessages(new TextDecoder().decode(inflated));
+        } catch {
+          // Ignore compressed packets if the browser cannot decompress them.
+        }
+      }
+    }
+    offset += packetLength || buffer.byteLength;
+  }
+}
+
+function parseBiliMessages(text) {
+  for (const part of text.split(/[\x00-\x1f]+/)) {
+    if (!part.startsWith("{")) continue;
+    try {
+      const data = JSON.parse(part);
+      if (String(data.cmd || "").includes("DANMU_MSG")) {
+        addDanmaku(`${data.info?.[2]?.[1] || ""}：${data.info?.[1] || ""}`, biliColor(data.info?.[0]?.[3]));
+      }
+    } catch {
+      // Ignore non-JSON fragments.
+    }
+  }
+}
+
+function biliColor(value) {
+  const color = Number(value || 0);
+  return color ? `#${color.toString(16).padStart(6, "0")}` : "#ffffff";
+}
+
+function addDanmaku(text, color = "#ffffff") {
+  const layer = document.querySelector("#danmaku-layer");
+  if (!layer || !state.danmakuEnabled || !text.trim()) return;
+  const item = document.createElement("span");
+  item.className = "danmaku-item";
+  item.textContent = text.slice(0, 80);
+  item.style.color = color;
+  item.style.top = `${8 + (danmakuRuntime.counter++ % 8) * 11}%`;
+  item.style.animationDuration = `${8 + Math.random() * 4}s`;
+  layer.appendChild(item);
+  item.addEventListener("animationend", () => item.remove(), { once: true });
+  while (layer.children.length > 80) layer.firstElementChild?.remove();
+}
+
+function updateDanmakuStatus() {
+  const status = document.querySelector("#danmaku-status");
+  if (status) status.textContent = state.danmakuEnabled ? state.danmakuStatus : "弹幕已关闭";
 }
 
 function render() {
@@ -304,6 +520,7 @@ function renderDetail() {
           ? `<iframe class="embed-player" src="${escapeHtml(embedUrl)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="no-referrer"></iframe>`
           : `<video id="player" controls playsinline poster="${room.cover || ""}"></video>`
       }
+      <div class="danmaku-layer" id="danmaku-layer"></div>
     </div>
     <div class="detail-head">
       <img src="${room.avatar || room.cover || "/assets/logo.png"}" alt="" />
@@ -314,8 +531,11 @@ function renderDetail() {
     </div>
     <div class="actions">
       <button id="follow-toggle">${isFollowed(room) ? "取消关注" : "关注"}</button>
+      <button id="danmaku-toggle">${state.danmakuEnabled ? "关闭弹幕" : "开启弹幕"}</button>
+      <button id="web-fullscreen">网页全屏</button>
       <a href="${room.url}" target="_blank" rel="noreferrer">打开原站</a>
     </div>
+    <div class="danmaku-status" id="danmaku-status">${escapeHtml(state.danmakuEnabled ? state.danmakuStatus : "弹幕已关闭")}</div>
     ${
       urls.length
         ? `<div class="quality-list">
@@ -363,6 +583,24 @@ function bindEvents() {
     loadRooms(false);
   });
   document.querySelector("#follow-toggle")?.addEventListener("click", () => toggleFollow(state.selected));
+  document.querySelector("#danmaku-toggle")?.addEventListener("click", () => {
+    state.danmakuEnabled = !state.danmakuEnabled;
+    writeStore("simple_live_danmaku_enabled", state.danmakuEnabled);
+    const button = document.querySelector("#danmaku-toggle");
+    if (button) button.textContent = state.danmakuEnabled ? "关闭弹幕" : "开启弹幕";
+    if (state.danmakuEnabled) {
+      startDanmaku(state.selected);
+    } else {
+      stopDanmaku();
+      document.querySelector("#danmaku-layer")?.replaceChildren();
+    }
+    updateDanmakuStatus();
+  });
+  document.querySelector("#web-fullscreen")?.addEventListener("click", () => {
+    const playerBox = document.querySelector(".player-box");
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else playerBox?.requestFullscreen?.().catch(() => {});
+  });
   document.querySelectorAll(".play-url").forEach((button) => {
     button.addEventListener("click", () => playUrl(button.dataset.url));
   });

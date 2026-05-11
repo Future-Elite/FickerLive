@@ -26,6 +26,7 @@ export async function onRequest(context) {
     if (action === "recommend") return ok(await recommend(site, page));
     if (action === "search") return ok(await search(site, keyword, page));
     if (action === "room") return ok({ detail: await room(site, roomId) });
+    if (action === "danmaku") return ok({ danmaku: await danmaku(site, roomId) });
     if (action === "douyu-sign") return ok(await douyuSignScript(roomId));
     if (action === "play") return ok(await play(site, roomId, sign));
 
@@ -74,6 +75,13 @@ async function play(site, roomId, sign) {
     urls: [],
     notice: "该平台播放地址需要客户端签名、专用请求头或原站权限校验，Cloudflare 版不代理视频流。"
   };
+}
+
+async function danmaku(site, roomId) {
+  if (!roomId) throw new Error("缺少 roomId");
+  if (site === "douyu") return { site, roomId: String(roomId) };
+  if (site === "bilibili") return danmakuBilibili(roomId);
+  throw new Error("该平台暂不支持弹幕。");
 }
 
 async function recommendDouyu(page) {
@@ -487,6 +495,40 @@ async function playBilibiliLegacy(roomId) {
     embedUrl: `https://live.bilibili.com/blanc/${encodeURIComponent(roomId)}`,
     notice: "B 站接口拦截了 Cloudflare 代理，已切换为官方嵌入播放器。"
   };
+}
+
+async function danmakuBilibili(roomId) {
+  try {
+    const roomData = await getJson(`https://api.live.bilibili.com/room/v1/Room/room_init?id=${encodeURIComponent(roomId)}`, {
+      headers: await biliHeaders({
+        referer: `https://live.bilibili.com/${roomId}`,
+        origin: "https://live.bilibili.com"
+      })
+    });
+    const realRoomId = roomData.data?.room_id || roomId;
+    const danmuData = await getJson(`https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id=${encodeURIComponent(realRoomId)}`, {
+      headers: await biliHeaders({
+        referer: `https://live.bilibili.com/${roomId}`,
+        origin: "https://live.bilibili.com"
+      })
+    });
+    const hosts = danmuData.data?.host_list || [];
+    return {
+      site: "bilibili",
+      roomId: Number(realRoomId),
+      token: danmuData.data?.token || "",
+      serverHost: hosts[0]?.host || "broadcastlv.chat.bilibili.com",
+      buvid: randomBiliId()
+    };
+  } catch {
+    return {
+      site: "bilibili",
+      roomId: Number(roomId),
+      token: "",
+      serverHost: "broadcastlv.chat.bilibili.com",
+      buvid: randomBiliId()
+    };
+  }
 }
 
 function biliRoom(item) {
