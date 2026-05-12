@@ -295,6 +295,10 @@ video {
   object-fit: contain;
 }
 
+video::-webkit-media-controls-fullscreen-button {
+  display: none !important;
+}
+
 .embed-player {
   width: 100%;
   height: 100%;
@@ -316,13 +320,44 @@ video {
   left: 100%;
   max-width: 70%;
   white-space: nowrap;
-  font-size: clamp(14px, 1.6vw, 24px);
-  font-weight: 700;
+  font-size: var(--danmaku-font-size, 24px);
+  font-weight: var(--danmaku-font-weight, 700);
   line-height: 1.2;
-  text-shadow: 1px 1px 2px #000, -1px -1px 2px #000, 0 0 3px #000;
+  opacity: var(--danmaku-opacity, 1);
+  text-shadow:
+    var(--danmaku-stroke-width, 3px) var(--danmaku-stroke-width, 3px) 2px #000,
+    calc(var(--danmaku-stroke-width, 3px) * -1) calc(var(--danmaku-stroke-width, 3px) * -1) 2px #000,
+    0 0 calc(var(--danmaku-stroke-width, 3px) + 2px) #000;
   animation-name: danmaku-run;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
+}
+
+.player-overlay-actions {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 4;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.player-overlay-actions button {
+  min-height: 32px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #e5e7eb;
+  cursor: pointer;
+  padding: 0 11px;
+}
+
+.player-box:hover .player-overlay-actions,
+.player-box:fullscreen .player-overlay-actions,
+.player-overlay-actions:focus-within {
+  opacity: 1;
 }
 
 .player-box:fullscreen {
@@ -338,10 +373,79 @@ video {
   height: 100vh;
 }
 
+.player-box:fullscreen .danmaku-layer {
+  z-index: 3;
+}
+
 .danmaku-status {
   color: #94a3b8;
   font-size: 12px;
   margin: -4px 0 12px;
+}
+
+.danmaku-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px;
+  margin: -4px 0 12px;
+  background: #0f172a;
+}
+
+.player-danmaku-settings {
+  display: none;
+}
+
+.player-box:fullscreen .player-danmaku-settings {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+  display: grid;
+  width: min(420px, calc(100vw - 28px));
+  max-height: calc(100vh - 76px);
+  overflow: auto;
+  margin: 0;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.danmaku-control {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 52px;
+  align-items: center;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.danmaku-control input {
+  width: 100%;
+  accent-color: #22c55e;
+}
+
+.danmaku-control strong {
+  text-align: right;
+  color: #e5e7eb;
+  font-weight: 600;
+}
+
+@media (hover: none) {
+  .player-overlay-actions {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 680px) {
+  .danmaku-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .danmaku-control {
+    grid-template-columns: 68px minmax(0, 1fr) 52px;
+  }
 }
 
 @keyframes danmaku-run {

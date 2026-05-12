@@ -8,6 +8,18 @@ const sites = [
   { id: "bilibili", name: "哔哩哔哩直播", logo: "/assets/images/bilibili.png" }
 ];
 
+const DANMAKU_DEFAULTS = {
+  area: 0.8,
+  opacity: 1,
+  fontSize: 16,
+  fontWeight: 4,
+  duration: 10,
+  strokeWidth: 2,
+  topMargin: 0,
+  bottomMargin: 0
+};
+const DANMAKU_FONT_WEIGHT_LABELS = ["极细", "很细", "细", "正常", "小粗", "偏粗", "粗", "很粗", "极粗"];
+
 const state = {
   site: "douyu",
   page: 1,
@@ -17,6 +29,8 @@ const state = {
   rooms: [],
   follows: readStore("simple_live_follows", []),
   danmakuEnabled: readStore("simple_live_danmaku_enabled", true),
+  danmakuSettingsOpen: false,
+  danmakuOptions: normalizeDanmakuOptions(readStore("simple_live_danmaku_options", DANMAKU_DEFAULTS)),
   danmakuStatus: ""
 };
 
@@ -38,6 +52,27 @@ function readStore(key, fallback) {
 
 function writeStore(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function clampNumber(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, number));
+}
+
+function normalizeDanmakuOptions(options = {}) {
+  const merged = { ...DANMAKU_DEFAULTS, ...options };
+  if (Number(merged.fontWeight) > 9) merged.fontWeight = Math.round(Number(merged.fontWeight) / 100);
+  return {
+    area: clampNumber(merged.area, 0.1, 1),
+    opacity: clampNumber(merged.opacity, 0.1, 1),
+    fontSize: clampNumber(merged.fontSize, 8, 48),
+    fontWeight: Math.round(clampNumber(merged.fontWeight, 1, 9)),
+    duration: clampNumber(merged.duration, 4, 20),
+    strokeWidth: clampNumber(merged.strokeWidth, 0, 10),
+    topMargin: clampNumber(merged.topMargin, 0, 48),
+    bottomMargin: clampNumber(merged.bottomMargin, 0, 48)
+  };
 }
 
 function fmtOnline(value) {
@@ -152,6 +187,7 @@ function isFollowed(room) {
 function playUrl(url, options = {}) {
   const video = document.querySelector("#player");
   if (!video || !url) return;
+  video.addEventListener("loadedmetadata", updateDanmakuLayout, { once: true });
   if (window.__hls) {
     window.__hls.destroy();
     window.__hls = null;
@@ -384,12 +420,17 @@ function biliColor(value) {
 function addDanmaku(text, color = "#ffffff") {
   const layer = document.querySelector("#danmaku-layer");
   if (!layer || !state.danmakuEnabled || !text.trim()) return;
+  updateDanmakuLayout();
+  const options = state.danmakuOptions;
+  const availableHeight = Math.max(40, layer.clientHeight - options.topMargin - options.bottomMargin);
+  const trackCount = Math.max(1, Math.floor((options.area * availableHeight) / Math.max(20, options.fontSize * 1.35)));
+  const track = danmakuRuntime.counter++ % trackCount;
   const item = document.createElement("span");
   item.className = "danmaku-item";
   item.textContent = text.slice(0, 80);
   item.style.color = color;
-  item.style.top = `${8 + (danmakuRuntime.counter++ % 8) * 11}%`;
-  item.style.animationDuration = `${8 + Math.random() * 4}s`;
+  item.style.top = `${options.topMargin + track * Math.max(20, options.fontSize * 1.35)}px`;
+  item.style.animationDuration = `${Math.max(4, options.duration + Math.random() * 1.5)}s`;
   layer.appendChild(item);
   item.addEventListener("animationend", () => item.remove(), { once: true });
   while (layer.children.length > 80) layer.firstElementChild?.remove();
@@ -398,6 +439,96 @@ function addDanmaku(text, color = "#ffffff") {
 function updateDanmakuStatus() {
   const status = document.querySelector("#danmaku-status");
   if (status) status.textContent = state.danmakuEnabled ? state.danmakuStatus : "弹幕已关闭";
+}
+
+function updateDanmakuLayout() {
+  const layer = document.querySelector("#danmaku-layer");
+  if (!layer) return;
+  const options = state.danmakuOptions;
+  layer.style.setProperty("--danmaku-font-size", `${options.fontSize}px`);
+  layer.style.setProperty("--danmaku-font-weight", `${danmakuCssFontWeight(options.fontWeight)}`);
+  layer.style.setProperty("--danmaku-opacity", `${options.opacity}`);
+  layer.style.setProperty("--danmaku-stroke-width", `${options.strokeWidth}px`);
+  layer.style.setProperty("--danmaku-bottom-margin", `${options.bottomMargin}px`);
+}
+
+function updateDanmakuOption(key, value) {
+  const numericKeys = ["area", "opacity", "fontSize", "fontWeight", "duration", "strokeWidth", "topMargin", "bottomMargin"];
+  state.danmakuOptions = normalizeDanmakuOptions({
+    ...state.danmakuOptions,
+    [key]: numericKeys.includes(key) ? Number(value) : value
+  });
+  writeStore("simple_live_danmaku_options", state.danmakuOptions);
+  updateDanmakuLayout();
+  document.querySelectorAll(`[data-danmaku-value="${key}"]`).forEach((item) => {
+    item.textContent = formatDanmakuOption(key, state.danmakuOptions[key]);
+  });
+}
+
+function formatDanmakuOption(key, value) {
+  if (key === "area" || key === "opacity") return `${Math.round(Number(value) * 100)}%`;
+  if (key === "duration") return `${value}秒`;
+  if (key === "fontWeight") return DANMAKU_FONT_WEIGHT_LABELS[Math.round(Number(value)) - 1] || "正常";
+  return `${value}px`;
+}
+
+function danmakuCssFontWeight(value) {
+  return Math.round(clampNumber(value, 1, 9)) * 100;
+}
+
+function togglePlayerFullscreen() {
+  const playerBox = document.querySelector(".player-box");
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else playerBox?.requestFullscreen?.().catch(() => {});
+}
+
+function normalizeFullscreenTarget() {
+  const video = document.querySelector("#player");
+  const playerBox = document.querySelector(".player-box");
+  if (document.fullscreenElement === video && playerBox) {
+    document.exitFullscreen()
+      .then(() => playerBox.requestFullscreen?.())
+      .catch(() => {});
+  }
+  syncPlayerControls();
+}
+
+function toggleDanmakuEnabled() {
+  state.danmakuEnabled = !state.danmakuEnabled;
+  writeStore("simple_live_danmaku_enabled", state.danmakuEnabled);
+  if (state.danmakuEnabled) {
+    startDanmaku(state.selected);
+  } else {
+    stopDanmaku();
+    document.querySelector("#danmaku-layer")?.replaceChildren();
+  }
+  updateDanmakuStatus();
+  syncPlayerControls();
+}
+
+function toggleDanmakuSettings() {
+  state.danmakuSettingsOpen = !state.danmakuSettingsOpen;
+  syncDanmakuSettingsPanels();
+  syncPlayerControls();
+}
+
+function syncDanmakuSettingsPanels() {
+  document.querySelectorAll(".detail-danmaku-settings, .player-danmaku-settings").forEach((item) => item.remove());
+  if (!state.danmakuSettingsOpen) return;
+  document.querySelector("#danmaku-status")?.insertAdjacentHTML("afterend", renderDanmakuSettings("detail"));
+  document.querySelector(".player-box")?.insertAdjacentHTML("beforeend", renderDanmakuSettings("player"));
+  bindDanmakuOptionEvents();
+}
+
+function syncPlayerControls() {
+  document.querySelectorAll("[data-danmaku-toggle]").forEach((button) => {
+    button.textContent = state.danmakuEnabled ? "关闭弹幕" : "开启弹幕";
+  });
+  document.querySelectorAll("[data-danmaku-settings-toggle]").forEach((button) => {
+    button.textContent = state.danmakuSettingsOpen ? "收起设置" : "弹幕设置";
+  });
+  const fullscreenButton = document.querySelector("#player-fullscreen");
+  if (fullscreenButton) fullscreenButton.textContent = document.fullscreenElement ? "退出全屏" : "全屏";
 }
 
 function render() {
@@ -514,13 +645,19 @@ function renderDetail() {
   const urls = room.play?.urls || [];
   const embedUrl = room.play?.embedUrl || "";
   return `
-    <div class="player-box">
+    <div class="player-box" style="${danmakuStyleVars()}">
       ${
         embedUrl
           ? `<iframe class="embed-player" src="${escapeHtml(embedUrl)}" allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="no-referrer"></iframe>`
-          : `<video id="player" controls playsinline poster="${room.cover || ""}"></video>`
+          : `<video id="player" controls controlslist="nofullscreen" playsinline poster="${room.cover || ""}"></video>`
       }
       <div class="danmaku-layer" id="danmaku-layer"></div>
+      <div class="player-overlay-actions">
+        <button data-danmaku-toggle type="button">${state.danmakuEnabled ? "关闭弹幕" : "开启弹幕"}</button>
+        <button data-danmaku-settings-toggle type="button">${state.danmakuSettingsOpen ? "收起设置" : "弹幕设置"}</button>
+        <button class="player-fullscreen-btn" id="player-fullscreen" type="button">全屏</button>
+      </div>
+      ${state.danmakuSettingsOpen ? renderDanmakuSettings("player") : ""}
     </div>
     <div class="detail-head">
       <img src="${room.avatar || room.cover || "/assets/logo.png"}" alt="" />
@@ -531,11 +668,17 @@ function renderDetail() {
     </div>
     <div class="actions">
       <button id="follow-toggle">${isFollowed(room) ? "取消关注" : "关注"}</button>
-      <button id="danmaku-toggle">${state.danmakuEnabled ? "关闭弹幕" : "开启弹幕"}</button>
+      <button data-danmaku-toggle>${state.danmakuEnabled ? "关闭弹幕" : "开启弹幕"}</button>
+      <button data-danmaku-settings-toggle>${state.danmakuSettingsOpen ? "收起设置" : "弹幕设置"}</button>
       <button id="web-fullscreen">网页全屏</button>
       <a href="${room.url}" target="_blank" rel="noreferrer">打开原站</a>
     </div>
     <div class="danmaku-status" id="danmaku-status">${escapeHtml(state.danmakuEnabled ? state.danmakuStatus : "弹幕已关闭")}</div>
+    ${
+      state.danmakuSettingsOpen
+        ? renderDanmakuSettings("detail")
+        : ""
+    }
     ${
       urls.length
         ? `<div class="quality-list">
@@ -553,6 +696,43 @@ function renderDetail() {
     }
     <p class="intro">${escapeHtml(room.introduction || "")}</p>
   `;
+}
+
+function renderDanmakuSettings(placement = "detail") {
+  const danmakuOptions = state.danmakuOptions;
+  return `
+    <div class="danmaku-settings ${placement === "player" ? "player-danmaku-settings" : "detail-danmaku-settings"}">
+      ${renderDanmakuRange("area", "显示区域", danmakuOptions.area, 0.1, 1, 0.1)}
+      ${renderDanmakuRange("opacity", "不透明度", danmakuOptions.opacity, 0.1, 1, 0.1)}
+      ${renderDanmakuRange("fontSize", "字体大小", danmakuOptions.fontSize, 8, 48, 1)}
+      ${renderDanmakuRange("fontWeight", "字体粗细", danmakuOptions.fontWeight, 1, 9, 1)}
+      ${renderDanmakuRange("duration", "滚动速度", danmakuOptions.duration, 4, 20, 1)}
+      ${renderDanmakuRange("strokeWidth", "字体描边", danmakuOptions.strokeWidth, 0, 10, 1)}
+      ${renderDanmakuRange("topMargin", "顶部边距", danmakuOptions.topMargin, 0, 48, 4)}
+      ${renderDanmakuRange("bottomMargin", "底部边距", danmakuOptions.bottomMargin, 0, 48, 4)}
+    </div>
+  `;
+}
+
+function renderDanmakuRange(key, label, value, min, max, step) {
+  return `
+    <label class="danmaku-control">
+      <span>${label}</span>
+      <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeHtml(value)}" data-danmaku-option="${key}" />
+      <strong data-danmaku-value="${key}">${formatDanmakuOption(key, value)}</strong>
+    </label>
+  `;
+}
+
+function danmakuStyleVars() {
+  const options = state.danmakuOptions;
+  return [
+    `--danmaku-font-size:${options.fontSize}px`,
+    `--danmaku-font-weight:${danmakuCssFontWeight(options.fontWeight)}`,
+    `--danmaku-opacity:${options.opacity}`,
+    `--danmaku-stroke-width:${options.strokeWidth}px`,
+    `--danmaku-bottom-margin:${options.bottomMargin}px`
+  ].join(";");
 }
 
 function bindEvents() {
@@ -583,26 +763,33 @@ function bindEvents() {
     loadRooms(false);
   });
   document.querySelector("#follow-toggle")?.addEventListener("click", () => toggleFollow(state.selected));
-  document.querySelector("#danmaku-toggle")?.addEventListener("click", () => {
-    state.danmakuEnabled = !state.danmakuEnabled;
-    writeStore("simple_live_danmaku_enabled", state.danmakuEnabled);
-    const button = document.querySelector("#danmaku-toggle");
-    if (button) button.textContent = state.danmakuEnabled ? "关闭弹幕" : "开启弹幕";
-    if (state.danmakuEnabled) {
-      startDanmaku(state.selected);
-    } else {
-      stopDanmaku();
-      document.querySelector("#danmaku-layer")?.replaceChildren();
-    }
-    updateDanmakuStatus();
+  document.querySelectorAll("[data-danmaku-toggle]").forEach((button) => {
+    button.addEventListener("click", toggleDanmakuEnabled);
   });
   document.querySelector("#web-fullscreen")?.addEventListener("click", () => {
-    const playerBox = document.querySelector(".player-box");
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    else playerBox?.requestFullscreen?.().catch(() => {});
+    togglePlayerFullscreen();
   });
+  document.querySelector("#player-fullscreen")?.addEventListener("click", togglePlayerFullscreen);
+  document.querySelector("#player")?.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    togglePlayerFullscreen();
+  });
+  document.querySelectorAll("[data-danmaku-settings-toggle]").forEach((button) => {
+    button.addEventListener("click", toggleDanmakuSettings);
+  });
+  bindDanmakuOptionEvents();
   document.querySelectorAll(".play-url").forEach((button) => {
     button.addEventListener("click", () => playUrl(button.dataset.url));
+  });
+  document.removeEventListener("fullscreenchange", normalizeFullscreenTarget);
+  document.addEventListener("fullscreenchange", normalizeFullscreenTarget);
+}
+
+function bindDanmakuOptionEvents() {
+  document.querySelectorAll("[data-danmaku-option]").forEach((input) => {
+    if (input.dataset.bound === "true") return;
+    input.dataset.bound = "true";
+    input.addEventListener("input", () => updateDanmakuOption(input.dataset.danmakuOption, input.value));
   });
 }
 
