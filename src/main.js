@@ -533,14 +533,25 @@ function syncPlayerControls() {
 
 function render() {
   const currentSite = sites.find((site) => site.id === state.site);
+  const totalOnline = state.rooms.reduce((sum, room) => sum + Number(room.online || 0), 0);
   app.innerHTML = `
     <main class="shell">
       <aside class="sidebar">
         <div class="brand">
           <img src="/assets/logo.png" alt="" />
           <div>
-            <strong>Simple Live</strong>
-            <span>Cloudflare Web</span>
+            <strong>Ficker Live</strong>
+            <span>多平台直播聚合</span>
+          </div>
+        </div>
+        <div class="side-stats" aria-label="直播概览">
+          <div>
+            <strong>${state.rooms.length}</strong>
+            <span>直播间</span>
+          </div>
+          <div>
+            <strong>${fmtOnline(totalOnline)}</strong>
+            <span>热度</span>
           </div>
         </div>
         <nav class="site-list">
@@ -550,13 +561,17 @@ function render() {
                 <button class="site-btn ${site.id === state.site ? "active" : ""}" data-site="${site.id}">
                   <img src="${site.logo}" alt="" />
                   <span>${site.name}</span>
+                  <small>LIVE</small>
                 </button>
               `
             )
             .join("")}
         </nav>
         <section class="follows">
-          <h2>关注</h2>
+          <div class="section-title">
+            <h2>我的关注</h2>
+            <span>${state.follows.length}</span>
+          </div>
           <div class="follow-list">
             ${
               state.follows.length
@@ -578,16 +593,23 @@ function render() {
 
       <section class="content">
         <header class="toolbar">
-          <div>
+          <div class="title-block">
+            <span class="eyebrow">Live Center</span>
             <h1>${currentSite.name}</h1>
-            <p>${state.keyword ? `搜索：${escapeHtml(state.keyword)}` : "热门直播"}</p>
+            <p>${state.keyword ? `正在搜索：${escapeHtml(state.keyword)}` : "热门推荐 · 实时开播"}</p>
           </div>
           <form class="search" id="search-form">
             <input name="keyword" placeholder="搜索直播间或主播" value="${escapeHtml(state.keyword)}" />
-            <button type="submit" title="搜索">搜索</button>
-            <button type="button" id="clear-search" title="清空">清空</button>
+            <button class="primary-btn" type="submit" title="搜索">搜索</button>
+            <button class="ghost-btn" type="button" id="clear-search" title="清空">清空</button>
           </form>
         </header>
+        <div class="channel-strip" aria-label="频道状态">
+          <span class="channel-chip active">热门推荐</span>
+          <span class="channel-chip">高清直播</span>
+          <span class="channel-chip">弹幕互动</span>
+          <span class="channel-chip">跨平台</span>
+        </div>
 
         ${
           state.error
@@ -621,12 +643,17 @@ function renderRooms() {
   return state.rooms
     .map(
       (room) => `
-        <article class="room-card" data-room='${escapeJson(room)}'>
-          <div class="cover"><img src="${room.cover || "/assets/logo.png"}" alt="" loading="lazy" /></div>
+        <article class="room-card ${state.selected?.site === room.site && state.selected?.roomId === room.roomId ? "selected" : ""}" data-room='${escapeJson(room)}'>
+          <div class="cover">
+            <img src="${room.cover || "/assets/logo.png"}" alt="" loading="lazy" />
+            <div class="cover-shade"></div>
+            <span class="live-badge">直播中</span>
+            <span class="heat-badge">${fmtOnline(room.online)}热度</span>
+          </div>
           <div class="room-info">
             <h3>${escapeHtml(room.title || "未命名直播间")}</h3>
             <p>${escapeHtml(room.userName || "")}</p>
-            <div>
+            <div class="room-meta">
               <span>${room.platformName}</span>
               <span>${fmtOnline(room.online)}</span>
             </div>
@@ -652,6 +679,10 @@ function renderDetail() {
           : `<video id="player" controls controlslist="nofullscreen" playsinline poster="${room.cover || ""}"></video>`
       }
       <div class="danmaku-layer" id="danmaku-layer"></div>
+      <div class="player-topbar">
+        <span>${escapeHtml(room.platformName || "直播")}</span>
+        <strong>${fmtOnline(room.online)}热度</strong>
+      </div>
       <div class="player-overlay-actions">
         <button data-danmaku-toggle type="button">${state.danmakuEnabled ? "关闭弹幕" : "开启弹幕"}</button>
         <button data-danmaku-settings-toggle type="button">${state.danmakuSettingsOpen ? "收起设置" : "弹幕设置"}</button>
@@ -663,7 +694,7 @@ function renderDetail() {
       <img src="${room.avatar || room.cover || "/assets/logo.png"}" alt="" />
       <div>
         <h2>${escapeHtml(room.title || "直播间")}</h2>
-        <p>${escapeHtml(room.userName || "")} · ${escapeHtml(room.platformName || "")} · ${fmtOnline(room.online)}</p>
+        <p>${escapeHtml(room.userName || "")} · ${escapeHtml(room.platformName || "")} · ${fmtOnline(room.online)}热度</p>
       </div>
     </div>
     <div class="actions">
