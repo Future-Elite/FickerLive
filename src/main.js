@@ -536,14 +536,34 @@ function render() {
   const totalOnline = state.rooms.reduce((sum, room) => sum + Number(room.online || 0), 0);
   app.innerHTML = `
     <main class="shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <img src="/assets/logo.png" alt="" />
-          <div>
-            <strong>Ficker Live</strong>
-            <span>多平台直播聚合</span>
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="brand">
+            <img src="/assets/images/douyu.png" alt="" />
+            <div>
+              <strong>Ficker Live</strong>
+              <span>对齐斗鱼风格的直播聚合</span>
+            </div>
+          </div>
+          <nav class="top-nav" aria-label="主导航">
+            <span class="active">首页</span>
+            <span>分类</span>
+            <span>赛事</span>
+            <span>娱乐</span>
+            <span>关注</span>
+          </nav>
+          <form class="search" id="search-form">
+            <input name="keyword" placeholder="搜索直播间、主播、分类" value="${escapeHtml(state.keyword)}" />
+            <button class="primary-btn" type="submit" title="搜索">搜索</button>
+            <button class="ghost-btn" type="button" id="clear-search" title="清空">清空</button>
+          </form>
+          <div class="top-actions">
+            <button type="button">客户端</button>
+            <button class="start-live" type="button">我要开播</button>
           </div>
         </div>
+      </header>
+      <aside class="sidebar">
         <div class="side-stats" aria-label="直播概览">
           <div>
             <strong>${state.rooms.length}</strong>
@@ -561,7 +581,7 @@ function render() {
                 <button class="site-btn ${site.id === state.site ? "active" : ""}" data-site="${site.id}">
                   <img src="${site.logo}" alt="" />
                   <span>${site.name}</span>
-                  <small>LIVE</small>
+                  <small>${site.id === state.site ? "当前" : "切换"}</small>
                 </button>
               `
             )
@@ -594,21 +614,23 @@ function render() {
       <section class="content">
         <header class="toolbar">
           <div class="title-block">
-            <span class="eyebrow">Live Center</span>
-            <h1>${currentSite.name}</h1>
-            <p>${state.keyword ? `正在搜索：${escapeHtml(state.keyword)}` : "热门推荐 · 实时开播"}</p>
+            <span class="eyebrow">猜你喜欢</span>
+            <h1>${state.keyword ? `搜索：${escapeHtml(state.keyword)}` : `${currentSite.name}热门直播`}</h1>
+            <p>${state.rooms.length ? `当前展示 ${state.rooms.length} 个直播间，累计热度 ${fmtOnline(totalOnline)}` : "热门推荐 · 实时开播"}</p>
           </div>
-          <form class="search" id="search-form">
-            <input name="keyword" placeholder="搜索直播间或主播" value="${escapeHtml(state.keyword)}" />
-            <button class="primary-btn" type="submit" title="搜索">搜索</button>
-            <button class="ghost-btn" type="button" id="clear-search" title="清空">清空</button>
-          </form>
+          <div class="toolbar-actions">
+            <span>全部直播</span>
+            <span>人气排序</span>
+          </div>
         </header>
         <div class="channel-strip" aria-label="频道状态">
-          <span class="channel-chip active">热门推荐</span>
-          <span class="channel-chip">高清直播</span>
-          <span class="channel-chip">弹幕互动</span>
-          <span class="channel-chip">跨平台</span>
+          <span class="channel-chip active">热门</span>
+          <span class="channel-chip">英雄联盟</span>
+          <span class="channel-chip">王者荣耀</span>
+          <span class="channel-chip">主机游戏</span>
+          <span class="channel-chip">颜值</span>
+          <span class="channel-chip">二次元</span>
+          <span class="channel-chip">户外</span>
         </div>
 
         ${
@@ -647,15 +669,14 @@ function renderRooms() {
           <div class="cover">
             <img src="${room.cover || "/assets/logo.png"}" alt="" loading="lazy" />
             <div class="cover-shade"></div>
-            <span class="live-badge">直播中</span>
+            <span class="live-badge">LIVE</span>
             <span class="heat-badge">${fmtOnline(room.online)}热度</span>
           </div>
           <div class="room-info">
             <h3>${escapeHtml(room.title || "未命名直播间")}</h3>
-            <p>${escapeHtml(room.userName || "")}</p>
             <div class="room-meta">
+              <span class="anchor-name">${escapeHtml(room.userName || "")}</span>
               <span>${room.platformName}</span>
-              <span>${fmtOnline(room.online)}</span>
             </div>
           </div>
         </article>
