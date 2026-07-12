@@ -1,6 +1,6 @@
-# Simple Live Cloudflare
+# Ficker Live
 
-这是基于 `xiaoyaocz/dart_simple_live` 思路重建的 Cloudflare Pages Web 版本。
+个人部署的斗鱼直播 Web 体验，使用 Ficker Live 品牌与斗鱼式信息架构。项目仅接入斗鱼公开直播数据，不是斗鱼官方产品。
 
 ## 本地运行
 
@@ -26,9 +26,10 @@ npm run pages:dev
 
 ## 当前能力
 
-- 斗鱼：推荐列表、搜索、直播间信息、H5 签名、HTTP-FLV 同域代理播放。
-- B 站：搜索、直播间信息、HLS 同域代理播放。
+- 首页推荐、搜索、动态主视觉和本地关注。
+- 独立直播间：斗鱼 H5 签名、HTTP-FLV 同域代理播放、清晰度切换、全屏和可配置屏幕弹幕。
+- 斗鱼弹幕 WebSocket 的只读实时互动栏；消息不会回传到斗鱼。
 
-直播平台接口经常变动；当前正式可播放路径为斗鱼 HTTP-FLV 和 B 站 HLS。虎牙/抖音涉及更复杂的防盗链、TARS 或风控签名，未作为正式播放入口开放。
+直播平台接口经常变动，当前播放路径为斗鱼 HTTP-FLV。所有视频流经 Cloudflare Pages Function 代理。
 
 注意：视频流会经过 Cloudflare Pages Function 代理。个人低流量使用可以工作；如果开放给大量用户，需要关注 Cloudflare 对长连接、带宽和滥用流量的限制。
