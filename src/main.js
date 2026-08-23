@@ -158,7 +158,10 @@ async function openRoom(roomId) {
     state.selected = { ...state.selected, ...detail.detail, loading: false, play };
     render();
     const playable = play.urls?.find((item) => item.url.includes("/api/stream"));
-    if (playable) playUrl(playable.url, { autoplay: false });
+    if (playable) {
+      state.selected.play.activeUrl = playable.url;
+      playUrl(playable.url, { autoplay: false });
+    }
     startDanmaku(state.selected);
   } catch (error) {
     if (currentRoute().roomId === roomId) {
@@ -180,7 +183,11 @@ async function getDouyuSign(roomId) {
 
 function playUrl(url, options = {}) {
   const video = document.querySelector("#player");
-  if (!video || !url || !flvjs.isSupported()) return;
+  if (!video || !url) return false;
+  if (!flvjs.isSupported()) {
+    showToast("当前浏览器不支持 FLV 直播播放");
+    return false;
+  }
   destroyPlayer();
   const player = flvjs.createPlayer(
     { type: "flv", isLive: true, url },
@@ -190,6 +197,15 @@ function playUrl(url, options = {}) {
   player.load();
   window.__flv = player;
   if (options.autoplay !== false) player.play().catch(() => {});
+  return true;
+}
+
+function switchQuality(url) {
+  if (!state.selected?.play?.urls?.some((item) => item.url === url)) return;
+  if (!playUrl(url)) return;
+  state.selected.play.activeUrl = url;
+  const select = document.querySelector("#quality-select");
+  if (select) select.value = url;
 }
 
 function destroyPlayer() {
@@ -475,7 +491,7 @@ function renderRoom() {
   const room = state.selected;
   if (!room || room.loading) return `<main class="room-page loading-page"><div class="loading-card"><i data-lucide="loader-circle"></i><p>正在打开直播间</p></div></main>`;
   if (room.error) return `<main class="room-page loading-page"><div class="loading-card"><i data-lucide="circle-alert"></i><p>${escapeHtml(room.error)}</p><button class="secondary-button" type="button" data-home>返回首页</button></div></main>`;
-  const firstUrl = room.play?.urls?.[0]?.url || "";
+  const firstUrl = room.play?.activeUrl || room.play?.urls?.[0]?.url || "";
   return `
     <main class="room-page">
       <div class="room-layout">
@@ -491,7 +507,7 @@ function renderRoom() {
             <div class="room-profile"><img src="${escapeHtml(room.avatar || room.cover || "/assets/logo.png")}" alt="" /><div><span>Ficker Live · 直播</span><h1>${escapeHtml(room.title || "直播间")}</h1><p>${escapeHtml(room.userName || "主播")} · ${fmtOnline(room.online)} 热度</p></div></div>
             <div class="room-actions"><button class="follow-button ${isFollowed(room) ? "following" : ""}" type="button" data-follow>${isFollowed(room) ? "已关注" : "关注"}</button><button class="icon-button bordered" title="分享直播间" aria-label="分享直播间" type="button" data-unavailable><i data-lucide="share-2"></i></button></div>
           </section>
-          <section class="stream-details"><div class="quality-row"><strong>清晰度</strong>${room.play?.urls?.length ? room.play.urls.map((item, index) => `<button class="quality-button ${item.url === firstUrl ? "active" : ""}" type="button" data-play-url="${escapeHtml(item.url)}">${escapeHtml(item.quality || `线路 ${index + 1}`)}</button>`).join("") : `<span class="stream-notice">${escapeHtml(room.play?.notice || "暂无可播放线路")}</span>`}</div><p>${escapeHtml(room.introduction || "暂无直播间介绍")}</p></section>
+          <section class="stream-details"><div class="quality-row">${room.play?.urls?.length ? `<label class="quality-picker"><strong>清晰度</strong><select id="quality-select" aria-label="选择清晰度">${room.play.urls.map((item, index) => `<option value="${escapeHtml(item.url)}" ${item.url === firstUrl ? "selected" : ""}>${escapeHtml(item.quality || `线路 ${index + 1}`)}</option>`).join("")}</select></label>` : `<strong>清晰度</strong><span class="stream-notice">${escapeHtml(room.play?.notice || "暂无可播放线路")}</span>`}</div><p>${escapeHtml(room.introduction || "暂无直播间介绍")}</p></section>
         </section>
         <aside class="chat-panel"><div class="chat-head"><div><strong>实时互动</strong><small id="chat-status">${escapeHtml(state.danmakuEnabled ? state.danmakuStatus || "等待连接" : "弹幕已关闭")}</small></div><button class="icon-button bordered" type="button" title="弹幕设置" aria-label="弹幕设置" data-danmaku-settings><i data-lucide="settings-2"></i></button></div><div class="chat-list" id="chat-list">${state.chatMessages.length ? state.chatMessages.map(renderChatMessage).join("") : `<div class="chat-empty"><i data-lucide="messages-square"></i><p>消息会显示在这里</p></div>`}</div><div class="chat-readonly"><i data-lucide="lock-keyhole"></i>个人部署为只读互动，不发送外部消息</div></aside>
       </div>
@@ -526,7 +542,7 @@ function bindEvents() {
     if (state.view !== "home") navigateHome();
     setTimeout(() => document.querySelector("#follow-panel")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
   }));
-  document.querySelectorAll("[data-play-url]").forEach((button) => button.addEventListener("click", () => playUrl(button.dataset.playUrl)));
+  document.querySelector("#quality-select")?.addEventListener("change", (event) => switchQuality(event.currentTarget.value));
   document.querySelectorAll("[data-danmaku-toggle]").forEach((button) => button.addEventListener("click", toggleDanmaku));
   document.querySelectorAll("[data-danmaku-settings]").forEach((button) => button.addEventListener("click", () => { state.danmakuSettingsOpen = !state.danmakuSettingsOpen; render(); }));
   document.querySelector("[data-fullscreen]")?.addEventListener("click", toggleFullscreen);
